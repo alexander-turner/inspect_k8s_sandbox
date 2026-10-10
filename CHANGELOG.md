@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Fix a compose string `command:` or `entrypoint:` splitting a quoted argument, e.g.
+  `sh -c "echo a b"`, into separate words.
+
 ## 2026-10-09 0.14.0
 
 - `INSPECT_POD_RESTART_CHECK=false` skips the pre-operation pod read inside
