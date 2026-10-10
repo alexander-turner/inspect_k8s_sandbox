@@ -14,6 +14,9 @@ _READ_TIMEOUT = (5, 30)  # (connect, read) seconds
 # The event list is namespace-wide and every sample asks for it at once when an eval
 # times out together. Enough to name the cause, not enough to be a second incident.
 _MAX_EVENTS = 100
+# The end of each container's termination message, so one container's long log cannot
+# push another out of a length-capped error message.
+_MESSAGE_TAIL = 300
 
 
 def describe_release_pods(
@@ -161,4 +164,5 @@ def _message(message: str | None) -> str:
 
     Under ``terminationMessagePolicy: FallbackToLogsOnError`` it holds the log's tail.
     """
-    return f": {message.strip()}" if message and message.strip() else ""
+    tail = (message or "").strip()[-_MESSAGE_TAIL:]
+    return f": {tail}" if tail else ""

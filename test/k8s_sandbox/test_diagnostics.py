@@ -287,3 +287,25 @@ def test_names_the_failed_container_with_its_log_tail_and_skips_completed_init()
         "container 'default': terminated Error (exit code 1): "
         "ERROR: Elasticsearch is not accessible after 60 seconds"
     ) in summary
+
+
+def test_a_long_termination_message_keeps_only_its_end() -> None:
+    killed = V1ContainerStatus(
+        name="search",
+        image="busybox:1.36",
+        image_id="",
+        ready=False,
+        restart_count=0,
+        state=V1ContainerState(
+            terminated=V1ContainerStateTerminated(
+                reason="Error", exit_code=137, message="x" * 5000 + "last line"
+            )
+        ),
+    )
+
+    with _patch_client([_pod("rel-default", "Failed", container_statuses=[killed])]):
+        summary = describe_release_pods(None, "default", "rel")
+
+    assert summary is not None
+    assert summary.endswith("last line [image: busybox:1.36]")
+    assert len(summary) < 500
