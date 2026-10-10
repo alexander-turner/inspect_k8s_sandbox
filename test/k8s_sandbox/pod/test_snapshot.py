@@ -185,3 +185,23 @@ def test_list_pods_parses_readiness(status: dict, expected: tuple[bool, str | No
     pod = list_pods(api, "ns", label_selector="app=x")[0]
 
     assert (pod.ready, pod.phase) == expected
+
+
+def test_parse_pod_counts_a_native_sidecars_status_and_not_a_plain_init_containers():
+    body = _pod_body(
+        containers=["default"],
+        container_statuses=[{"name": "default", "restartCount": 0}],
+    )
+    body["spec"]["initContainers"] = [
+        {"name": "db", "restartPolicy": "Always"},
+        {"name": "seed"},
+    ]
+    body["status"]["initContainerStatuses"] = [
+        {"name": "db", "restartCount": 1},
+        {"name": "seed", "restartCount": 0},
+    ]
+
+    snapshot = _parse_pod(body)
+
+    assert snapshot.restart_count_for("db") == 1
+    assert snapshot.status_for("seed") is None

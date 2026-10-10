@@ -230,3 +230,35 @@ def test_env_var_default_keeps_file_op_check(monkeypatch):
                 with pytest.raises(PodReplacedError):
                     asyncio.run(pod.read_file(pathlib.Path("/x"), io.BytesIO()))
                 assert mock_client.return_value.read_namespaced_pod.call_count == 1
+
+
+def test_a_native_sidecar_is_checked_like_any_container():
+    sidecar = PodInfo(
+        name="agent-env-abc-default-0",
+        namespace="ns",
+        context_name=None,
+        default_container_name="db",
+        uid="uid-1",
+        initial_restart_count=0,
+        restarted_container_behavior="raise",
+    )
+    body = {
+        "metadata": {"uid": "uid-1", "name": "agent-env-abc-default-0"},
+        "spec": {"initContainers": [{"name": "db", "restartPolicy": "Always"}]},
+        "status": {
+            "containerStatuses": [{"name": "default", "restartCount": 0}],
+            "initContainerStatuses": [{"name": "db", "restartCount": 0}],
+        },
+    }
+    with patch("k8s_sandbox._pod.op.k8s_client") as k8s_client:
+        k8s_client.return_value.read_namespaced_pod.return_value = _raw_pod_response(
+            body
+        )
+        check_for_pod_restart(sidecar)
+
+        body["status"]["initContainerStatuses"][0]["restartCount"] = 1
+        k8s_client.return_value.read_namespaced_pod.return_value = _raw_pod_response(
+            body
+        )
+        with pytest.raises(ContainerRestartedError):
+            check_for_pod_restart(sidecar)
