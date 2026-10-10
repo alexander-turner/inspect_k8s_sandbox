@@ -396,27 +396,29 @@ class Release:
                 error=result.stderr,
             )
             raise _ResourceQuotaModifiedError(result.stderr)
-        extra = await self._pod_diagnostics()
+        diagnostics = await self._pod_diagnostics()
         if re.search(r"context deadline exceeded", result.stderr):
             _raise_runtime_error(
-                f"Helm install timed out (context deadline exceeded). The configured "
-                f"timeout value was {_get_timeout()}s. Please see the docs for why "
-                f"this might occur: {HELM_CONTEXT_DEADLINE_EXCEEDED_URL}. Also "
-                f"consider increasing the timeout by setting the "
-                f"{INSPECT_HELM_TIMEOUT} environment variable.",
+                _with_diagnostics(
+                    f"Helm install timed out (context deadline exceeded). The "
+                    f"configured timeout value was {_get_timeout()}s. Please see the "
+                    f"docs for why this might occur: "
+                    f"{HELM_CONTEXT_DEADLINE_EXCEEDED_URL}. Also consider increasing "
+                    f"the timeout by setting the {INSPECT_HELM_TIMEOUT} environment "
+                    f"variable.",
+                    diagnostics,
+                ),
                 release=self.release_name,
                 result=result,
-                **extra,
             )
         _raise_runtime_error(
-            "Helm install failed.",
+            _with_diagnostics("Helm install failed.", diagnostics),
             release=self.release_name,
             result=result,
-            **extra,
         )
 
-    async def _pod_diagnostics(self) -> dict[str, Any]:
-        """The release's container states. Empty if they cannot be gathered."""
+    async def _pod_diagnostics(self) -> str | None:
+        """The release's container states. None if they cannot be gathered."""
         # Helm reports only the generic symptom, so name the concrete cause:
         # ImagePullBackOff, OOMKilled, FailedScheduling, ...
         diagnostics = await asyncio.to_thread(
@@ -426,7 +428,7 @@ class Release:
             self.release_name,
             self._object_names,
         )
-        return {"pod_diagnostics": diagnostics} if diagnostics else {}
+        return diagnostics
 
     def _list_release_pods(self, allow_stale: bool = False) -> list[PodSnapshot]:
         """The release's pods. `allow_stale` reads the API server's watch cache."""
@@ -488,40 +490,50 @@ class Release:
     async def _raise_not_ready_error(
         self, saw_a_pod: bool, poll_error: Exception | None, missing: frozenset[str]
     ) -> NoReturn:
-        extra = await self._pod_diagnostics()
+        diagnostics = await self._pod_diagnostics()
         budget = f"{_get_timeout()}s"
         if poll_error is not None and not saw_a_pod:
             # Nothing is known about what the release created, so blaming the chart
             # or the cluster would be a guess.
             _raise_runtime_error(
-                f"Could not read the Helm release's pods within {budget}, so it is "
-                f"not known whether the sandbox started. See "
-                f"{HELM_RELEASE_NOT_READY_URL}.",
+                _with_diagnostics(
+                    f"Could not read the Helm release's pods within {budget}, so it "
+                    f"is not known whether the sandbox started. See "
+                    f"{HELM_RELEASE_NOT_READY_URL}.",
+                    diagnostics,
+                ),
                 release=self.release_name,
                 from_exception=poll_error,
-                **extra,
             )
         if not saw_a_pod:
             _raise_runtime_error(
-                f"The Helm release created no pods labelled "
-                f"app.kubernetes.io/instance={self.release_name} within {budget}. "
-                f"Every chart must render at least one Pod, or a controller which "
-                f"creates one, carrying that label. See {HELM_RELEASE_NOT_READY_URL}.",
+                _with_diagnostics(
+                    f"The Helm release created no pods labelled "
+                    f"app.kubernetes.io/instance={self.release_name} within "
+                    f"{budget}. Every chart must render at least one Pod, or a "
+                    f"controller which creates one, carrying that label. See "
+                    f"{HELM_RELEASE_NOT_READY_URL}.",
+                    diagnostics,
+                ),
                 release=self.release_name,
-                **extra,
             )
         # Which sandbox is absent is the first thing to establish; the full declared
         # list leaves that to be worked out from the diagnostics.
-        extra["missing_sandboxes" if missing else "declared_sandboxes"] = ", ".join(
-            sorted(missing or self._expected_services)
-        )
+        sandboxes = {
+            "missing_sandboxes" if missing else "declared_sandboxes": ", ".join(
+                sorted(missing or self._expected_services)
+            )
+        }
         _raise_runtime_error(
-            f"Helm release did not become ready within {budget}. Please see the docs "
-            f"for why this might occur: {HELM_RELEASE_NOT_READY_URL}. Also consider "
-            f"increasing the timeout by setting the {INSPECT_HELM_TIMEOUT} "
-            f"environment variable.",
+            _with_diagnostics(
+                f"Helm release did not become ready within {budget}. Please see the "
+                f"docs for why this might occur: {HELM_RELEASE_NOT_READY_URL}. Also "
+                f"consider increasing the timeout by setting the "
+                f"{INSPECT_HELM_TIMEOUT} environment variable.",
+                diagnostics,
+            ),
             release=self.release_name,
-            **extra,
+            **sandboxes,
         )
 
 
@@ -598,6 +610,12 @@ async def get_all_release_names(namespace: str, context_name: str | None) -> lis
         capture_output=True,
     )
     return result.stdout.splitlines()
+
+
+def _with_diagnostics(message: str, diagnostics: str | None) -> str:
+    """Append the pod diagnostics to the message, which the logger never truncates."""
+    # Kubelet-bounded: 4 KiB/message, 12 KiB/pod, log tail 2 KiB/80 lines; _MAX_EVENTS.
+    return f"{message}\nPod diagnostics:\n{diagnostics}" if diagnostics else message
 
 
 def _raise_runtime_error(

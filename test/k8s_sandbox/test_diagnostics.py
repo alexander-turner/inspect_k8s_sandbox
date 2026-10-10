@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+from inspect_ai.util import ExecResult
 from kubernetes.client import (  # type: ignore
     CoreV1Event,
     CoreV1EventList,
@@ -20,6 +22,7 @@ from k8s_sandbox._diagnostics import (
     _READ_TIMEOUT,
     describe_release_pods,
 )
+from k8s_sandbox._helm import Release, ValuesSource
 
 
 def _pod(
@@ -289,7 +292,9 @@ def test_names_the_failed_container_with_its_log_tail_and_skips_completed_init()
     ) in summary
 
 
-def test_a_long_termination_message_keeps_only_its_end() -> None:
+async def test_a_long_termination_message_does_not_hide_the_failed_container() -> None:
+    # A sidecar killed during teardown prints its whole log tail. That must not cut
+    # the container which actually failed out of the error.
     killed = V1ContainerStatus(
         name="search",
         image="busybox:1.36",
@@ -298,14 +303,33 @@ def test_a_long_termination_message_keeps_only_its_end() -> None:
         restart_count=0,
         state=V1ContainerState(
             terminated=V1ContainerStateTerminated(
-                reason="Error", exit_code=137, message="x" * 5000 + "last line"
+                reason="Error", exit_code=137, message="first line\n" + "x" * 5000
             )
         ),
     )
+    failed = V1ContainerStatus(
+        name="default",
+        image="busybox:1.36",
+        image_id="",
+        ready=False,
+        restart_count=0,
+        state=V1ContainerState(
+            terminated=V1ContainerStateTerminated(
+                reason="Error", exit_code=3, message="no index found"
+            )
+        ),
+    )
+    with patch("k8s_sandbox._helm.get_default_namespace", return_value="default"):
+        release = Release(__file__, None, ValuesSource.none(), None)
+    result = ExecResult(success=False, returncode=1, stdout="", stderr="Error: boom\n")
 
-    with _patch_client([_pod("rel-default", "Failed", container_statuses=[killed])]):
-        summary = describe_release_pods(None, "default", "rel")
+    with _patch_client([_pod("rel-default", "Failed", [killed, failed])]):
+        with pytest.raises(RuntimeError) as excinfo:
+            await release._raise_install_error(result)
 
-    assert summary is not None
-    assert summary.endswith("last line [image: busybox:1.36]")
-    assert len(summary) < 500
+    error = str(excinfo.value)
+    assert (
+        "container 'default': terminated Error (exit code 3): no index found" in error
+    )
+    assert "container 'search': terminated Error (exit code 137): first line" in error
+    assert "x" * 5000 in error
