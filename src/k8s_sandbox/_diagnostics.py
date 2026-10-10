@@ -14,9 +14,6 @@ _READ_TIMEOUT = (5, 30)  # (connect, read) seconds
 # The event list is namespace-wide and every sample asks for it at once when an eval
 # times out together. Enough to name the cause, not enough to be a second incident.
 _MAX_EVENTS = 100
-# The end of each container's termination message, so one container's long log cannot
-# push another out of a length-capped error message.
-_MESSAGE_TAIL = 300
 
 
 def describe_release_pods(
@@ -131,8 +128,7 @@ def _describe_container(
         if waiting.message:
             detail += f": {waiting.message}"
         parts.append(f"waiting ({detail})")
-    # An init container that ran to completion is healthy, and listing every one
-    # pushes the container that failed out of a length-capped error message.
+    # An init container that ran to completion is healthy, so it is not listed.
     if terminated is not None and terminated.exit_code != 0:
         parts.append(
             f"terminated {terminated.reason} (exit code {terminated.exit_code})"
@@ -164,5 +160,4 @@ def _message(message: str | None) -> str:
 
     Under ``terminationMessagePolicy: FallbackToLogsOnError`` it holds the log's tail.
     """
-    tail = (message or "").strip()[-_MESSAGE_TAIL:]
-    return f": {tail}" if tail else ""
+    return f": {message.strip()}" if message and message.strip() else ""
