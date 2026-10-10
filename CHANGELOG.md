@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix a compose string `command:` or `entrypoint:` splitting a quoted argument, e.g.
+  `sh -c "echo a b"`, into separate words.
 - Add `networkPolicy.enabled` (default `true`). Set `false` to install on a cluster
   without Cilium; the cluster or pod runtime must then enforce egress and isolation.
   Allowlists and `network_mode: none` are rejected while it is off.
