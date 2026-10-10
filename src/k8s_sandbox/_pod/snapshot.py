@@ -44,7 +44,8 @@ class PodSnapshot:
 
     Only the fields used by this library are parsed. ``container_statuses`` is
     ``None`` when the kubelet has not yet published any (briefly possible right
-    after scheduling), as distinct from an empty tuple.
+    after scheduling), as distinct from an empty tuple. It also holds each native
+    sidecar's status, since exec reaches a sidecar as it does any container.
     """
 
     name: str
@@ -124,8 +125,25 @@ def _parse_pod(pod: dict[str, Any]) -> PodSnapshot:
     if name is None or uid is None:
         raise ValueError(f"Pod is missing metadata.name or metadata.uid: {metadata}")
     raw_statuses = status.get("containerStatuses")
+    # A native sidecar (an init container with restartPolicy Always) runs for the
+    # pod's life and accepts exec, but reports under initContainerStatuses.
+    sidecars = {
+        c["name"]
+        for c in spec.get("initContainers") or []
+        if c.get("restartPolicy") == "Always"
+    }
     container_statuses = (
-        tuple(_parse_container_status(cs) for cs in raw_statuses)
+        tuple(
+            _parse_container_status(cs)
+            for cs in [
+                *raw_statuses,
+                *(
+                    cs
+                    for cs in status.get("initContainerStatuses") or []
+                    if cs["name"] in sidecars
+                ),
+            ]
+        )
         if raw_statuses is not None
         else None
     )

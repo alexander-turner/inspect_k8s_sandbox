@@ -14,6 +14,9 @@ _READ_TIMEOUT = (5, 30)  # (connect, read) seconds
 # The event list is namespace-wide and every sample asks for it at once when an eval
 # times out together. Enough to name the cause, not enough to be a second incident.
 _MAX_EVENTS = 100
+# The end of each container's termination message, so one container's long log cannot
+# push another out of a length-capped error message.
+_MESSAGE_TAIL = 300
 
 
 def describe_release_pods(
@@ -128,9 +131,12 @@ def _describe_container(
         if waiting.message:
             detail += f": {waiting.message}"
         parts.append(f"waiting ({detail})")
-    if terminated is not None:
+    # An init container that ran to completion is healthy, and listing every one
+    # pushes the container that failed out of a length-capped error message.
+    if terminated is not None and terminated.exit_code != 0:
         parts.append(
             f"terminated {terminated.reason} (exit code {terminated.exit_code})"
+            + _message(terminated.message)
         )
     if terminated is None and last_terminated is not None:
         # A crash-looping container is currently "waiting"; the reason it keeps dying
@@ -138,6 +144,7 @@ def _describe_container(
         parts.append(
             f"last terminated {last_terminated.reason} "
             f"(exit code {last_terminated.exit_code})"
+            + _message(last_terminated.message)
         )
 
     if not parts:
@@ -150,3 +157,12 @@ def _describe_container(
     if container.image:
         line += f" [image: {container.image}]"
     return line
+
+
+def _message(message: str | None) -> str:
+    """Format a container's termination message for the summary.
+
+    Under ``terminationMessagePolicy: FallbackToLogsOnError`` it holds the log's tail.
+    """
+    tail = (message or "").strip()[-_MESSAGE_TAIL:]
+    return f": {tail}" if tail else ""
