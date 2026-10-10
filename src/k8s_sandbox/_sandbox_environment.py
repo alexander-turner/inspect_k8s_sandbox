@@ -93,8 +93,9 @@ def _retry() -> AsyncRetrying:
         stop=stop_after_attempt(5),
         wait=wait_exponential_jitter(initial=1, max=10),
         retry=retry_if_exception(
-            lambda e: isinstance(e, _TRANSIENT_TYPES)
-            and not isinstance(e, _PERMANENT_TYPES)
+            lambda e: (
+                isinstance(e, _TRANSIENT_TYPES) and not isinstance(e, _PERMANENT_TYPES)
+            )
         ),
         reraise=True,
     )

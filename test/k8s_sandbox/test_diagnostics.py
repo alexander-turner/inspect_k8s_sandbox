@@ -240,3 +240,50 @@ def test_returns_none_when_all_containers_healthy_and_no_events() -> None:
         summary = describe_release_pods(None, "default", "rel")
 
     assert summary is None
+
+
+def test_names_the_failed_container_with_its_log_tail_and_skips_completed_init() -> (
+    None
+):
+    finished = V1ContainerStatus(
+        name="seed",
+        image="busybox:1.36",
+        image_id="",
+        ready=False,
+        restart_count=0,
+        state=V1ContainerState(
+            terminated=V1ContainerStateTerminated(reason="Completed", exit_code=0)
+        ),
+    )
+    crashed = V1ContainerStatus(
+        name="default",
+        image="busybox:1.36",
+        image_id="",
+        ready=False,
+        restart_count=0,
+        state=V1ContainerState(
+            terminated=V1ContainerStateTerminated(
+                reason="Error",
+                exit_code=1,
+                message="ERROR: Elasticsearch is not accessible after 60 seconds\n",
+            )
+        ),
+    )
+    pods = [
+        _pod(
+            "rel-default",
+            "Failed",
+            container_statuses=[crashed],
+            init_container_statuses=[finished],
+        )
+    ]
+
+    with _patch_client(pods):
+        summary = describe_release_pods(None, "default", "rel")
+
+    assert summary is not None
+    assert "seed" not in summary
+    assert (
+        "container 'default': terminated Error (exit code 1): "
+        "ERROR: Elasticsearch is not accessible after 60 seconds"
+    ) in summary

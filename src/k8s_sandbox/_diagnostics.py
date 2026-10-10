@@ -128,9 +128,12 @@ def _describe_container(
         if waiting.message:
             detail += f": {waiting.message}"
         parts.append(f"waiting ({detail})")
-    if terminated is not None:
+    # An init container that ran to completion is healthy, and listing every one
+    # pushes the container that failed out of a length-capped error message.
+    if terminated is not None and terminated.exit_code != 0:
         parts.append(
             f"terminated {terminated.reason} (exit code {terminated.exit_code})"
+            + _message(terminated.message)
         )
     if terminated is None and last_terminated is not None:
         # A crash-looping container is currently "waiting"; the reason it keeps dying
@@ -138,6 +141,7 @@ def _describe_container(
         parts.append(
             f"last terminated {last_terminated.reason} "
             f"(exit code {last_terminated.exit_code})"
+            + _message(last_terminated.message)
         )
 
     if not parts:
@@ -150,3 +154,11 @@ def _describe_container(
     if container.image:
         line += f" [image: {container.image}]"
     return line
+
+
+def _message(message: str | None) -> str:
+    """Format a container's termination message for the summary.
+
+    Under ``terminationMessagePolicy: FallbackToLogsOnError`` it holds the log's tail.
+    """
+    return f": {message.strip()}" if message and message.strip() else ""

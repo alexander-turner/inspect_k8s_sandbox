@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- A Helm release that never becomes ready now reports a failed container's termination
+  message (its log tail under `terminationMessagePolicy: FallbackToLogsOnError`), and no
+  longer lists init containers that completed.
 - Fix `exec()` into a native sidecar (an init container with `restartPolicy: Always`)
   raising `RuntimeError: Pod '…' does not have a container named '…'`.
 - Add `networkPolicy.enabled` (default `true`). Set `false` to install on a cluster
